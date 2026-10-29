@@ -57,6 +57,7 @@
         .gold-gradient-text {
             background: linear-gradient(135deg, #FFF0C2 0%, #FFD76A 30%, #D4AF37 70%, #FF9F1C 100%);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
             text-shadow: 0 0 25px rgba(212, 175, 55, 0.4);
         }
@@ -111,6 +112,50 @@
             background: #D4AF37;
             border-radius: 2px;
         }
+
+        /* Fullscreen opening video */
+  #ceremonyVideoOverlay {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100dvh;
+    background: #000;
+    z-index: 999999;
+    display: none;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #ceremonyVideoOverlay.active {
+    display: flex;
+  }
+
+  #ceremonyVideo {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: black;
+  }
+
+  #ceremonyVideoError {
+    position: absolute; bottom: 32px; left: 5%; right: 5%;
+    text-align: center; color: #FFD76A; background: rgba(0,0,0,.85);
+    padding: 16px; border: 1px solid #D4AF37; border-radius: 10px;
+    font-family: sans-serif; z-index: 3;
+  }
+  #closeCeremonyVideo {
+    position: absolute;
+    top: 20px;
+    right: 24px;
+    padding: 12px 18px;
+    background: rgba(0, 0, 0, 0.65);
+    color: #ffd76a;
+    border: 1px solid #ffd76a;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 22px;
+    z-index: 2;
+  }
     </style>
 </head>
 
@@ -317,7 +362,7 @@
             <div class="relative group my-2 mb-6">
                 <div class="absolute -inset-3 bg-gradient-to-r from-gold-bright via-gold-amber to-gold-metallic rounded-full blur-xl opacity-80 group-hover:opacity-100 transition duration-500 animate-pulse"></div>
                 
-                <button onclick="triggerGrandLaunch()" class="relative w-48 h-48 sm:w-56 sm:h-56 rounded-full bg-gradient-to-b from-obsidian-card via-obsidian to-obsidian border-4 border-gold-bright text-gold-bright flex flex-col items-center justify-center p-4 shadow-[0_0_40px_rgba(255,215,106,0.6)] transition-all duration-300 transform group-hover:scale-105 active:scale-95 cursor-pointer pulse-gold">
+                <button id="launchCeremonyBtn" onclick="triggerGrandLaunch()" class="relative w-48 h-48 sm:w-56 sm:h-56 rounded-full bg-gradient-to-b from-obsidian-card via-obsidian to-obsidian border-4 border-gold-bright text-gold-bright flex flex-col items-center justify-center p-4 shadow-[0_0_40px_rgba(255,215,106,0.6)] transition-all duration-300 transform group-hover:scale-105 active:scale-95 cursor-pointer pulse-gold">
                     <i class="fa-solid fa-power-off text-3xl sm:text-4xl mb-2 text-gold-bright animate-pulse"></i>
                     <span class="font-orbitron font-black text-base sm:text-xl tracking-wider text-center leading-tight gold-gradient-text">
                         LANCARKAN MAJLIS
@@ -333,6 +378,17 @@
                 </button>
             </div>
         </section>
+
+        <!-- OPENING VIDEO OVERLAY -->
+<div id="ceremonyVideoOverlay">
+  <video id="ceremonyVideo" playsinline preload="metadata" aria-label="Video pembukaan Majlis Anugerah Permata Permaisuri 2026">
+    <source src="./gimik-video.mp4" type="video/mp4">
+  </video>
+
+  <button id="closeCeremonyVideo" type="button"
+          aria-label="Tutup video dan kembali ke skrin pelancaran">✕</button>
+  <div id="ceremonyVideoError" role="alert" hidden>Video tidak dapat dimainkan. Pastikan fail gimik-video.mp4 berada bersama index.html.</div>
+</div>
 
     </main>
 
@@ -448,6 +504,7 @@
         // Toggle Audio Mute
         function toggleAudio() {
             isAudioMuted = !isAudioMuted;
+            document.getElementById('ceremonyVideo').muted = isAudioMuted;
             const icon = document.getElementById('audioIcon');
             if (isAudioMuted) {
                 icon.className = 'fa-solid fa-volume-xmark text-rose-400';
@@ -568,9 +625,8 @@
 
         // STEP 3 -> GRAND LAUNCH TRIGGER
         function triggerGrandLaunch() {
-            playSound('cyberFanfare');
-            triggerConfettiBurst();
-            triggerFireworksBurst();
+            // Called directly by the user's click, allowing playback with sound.
+            playCeremonyVideo();
         }
 
         // Confetti Burst Effect
@@ -587,6 +643,7 @@
 
         // System Reset
         function resetSystem() {
+            stopCeremonyVideo();
             if (scanInterval) clearInterval(scanInterval);
             playSound('key');
             document.getElementById('accessCode').value = '';
@@ -749,6 +806,70 @@
                 initMatrixNodes();
             });
         };
+
+        
     </script>
+    
+    <script>
+        const ceremonyOverlay = document.getElementById('ceremonyVideoOverlay');
+        const ceremonyVideo = document.getElementById('ceremonyVideo');
+        const ceremonyVideoError = document.getElementById('ceremonyVideoError');
+        const closeCeremonyVideo = document.getElementById('closeCeremonyVideo');
+        let ceremonyLaunching = false;
+
+        function playCeremonyVideo() {
+            if (ceremonyLaunching) return;
+            ceremonyLaunching = true;
+            ceremonyVideoError.hidden = true;
+            ceremonyVideo.controls = false;
+            ceremonyVideo.muted = isAudioMuted;
+            ceremonyVideo.volume = 1;
+            ceremonyOverlay.classList.add('active');
+
+            // Both requests begin synchronously in the click handler.
+            // Browsers may block fullscreen, but the overlay still fills the screen.
+            if (!document.fullscreenElement && ceremonyOverlay.requestFullscreen) {
+                ceremonyOverlay.requestFullscreen().catch(err => {
+                    console.warn('Fullscreen tidak dibenarkan:', err);
+                });
+            }
+            try { ceremonyVideo.currentTime = 0; } catch (_) {}
+            const promise = ceremonyVideo.play();
+            if (promise && typeof promise.catch === 'function') {
+                promise.catch(err => {
+                    console.error('Video gagal dimainkan:', err);
+                    ceremonyVideo.controls = true;
+                    ceremonyVideoError.hidden = false;
+                });
+            }
+        }
+
+        function stopCeremonyVideo() {
+            ceremonyVideo.pause();
+            try { ceremonyVideo.currentTime = 0; } catch (_) {}
+            ceremonyOverlay.classList.remove('active');
+            ceremonyVideoError.hidden = true;
+            ceremonyLaunching = false;
+            if (document.fullscreenElement === ceremonyOverlay && document.exitFullscreen) {
+                document.exitFullscreen().catch(() => {});
+            }
+        }
+
+        closeCeremonyVideo.addEventListener('click', stopCeremonyVideo);
+        ceremonyVideo.addEventListener('ended', () => {
+            stopCeremonyVideo();
+            // Retain the original ceremonial finale after the video.
+            playSound('cyberFanfare');
+            triggerConfettiBurst();
+            triggerFireworksBurst();
+        });
+        ceremonyVideo.addEventListener('error', () => {
+            if (ceremonyLaunching) {
+                ceremonyVideo.controls = true;
+                ceremonyVideoError.hidden = false;
+            }
+        });
+    </script>
+
 </body>
 </html>
