@@ -113,6 +113,13 @@
             border-radius: 2px;
         }
 
+        /* Video preparation status */
+        #videoPreparationStatus { min-height: 1.5em; }
+        #videoPreparationProgress { width: 0%; transition: width .2s ease; }
+        #videoBufferStatus[hidden] { display: none !important; }
+        #videoBufferStatus { position:absolute; bottom:20px; left:50%; transform:translateX(-50%); z-index:4; color:#FFD76A; background:rgba(0,0,0,.85); padding:12px 20px; border:1px solid #D4AF37; border-radius:8px; font:600 14px sans-serif; }
+        body.ceremony-video-playing #cyberMatrixCanvas,
+        body.ceremony-video-playing #fireworksCanvas { visibility:hidden; }
         /* Fullscreen opening video */
   #ceremonyVideoOverlay {
     position: fixed;
@@ -288,6 +295,21 @@
                 </div>
             </div>
 
+            <!-- PREPARE VIDEO BEFORE THE CEREMONY (downloads the full MP4 to memory) -->
+            <div class="w-full mb-4 rounded-xl border border-gold-metallic/50 bg-obsidian-card/90 p-3 text-left">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <p class="font-orbitron text-xs font-bold text-gold-bright">VIDEO PEMBUKAAN · PERSEDIAAN PENTAS</p>
+                        <p id="videoPreparationStatus" role="status" aria-live="polite" class="font-tech text-xs text-gold-champagne mt-1">Belum disediakan. Sediakan video sebelum acara bermula.</p>
+                    </div>
+                    <button id="prepareVideoBtn" type="button" onclick="prepareCeremonyVideo()" class="rounded-lg border border-gold-bright bg-gold-metallic/20 px-4 py-2 font-tech text-xs font-bold text-gold-bright hover:bg-gold-metallic/40">SEDIAKAN VIDEO</button>
+                </div>
+                <div class="mt-2 h-2 overflow-hidden rounded-full bg-obsidian border border-gold-metallic/40">
+                    <div id="videoPreparationProgress" class="h-full bg-gradient-to-r from-gold-metallic to-gold-bright"></div>
+                </div>
+                <p class="mt-1 text-[11px] text-gold-secondary">Tekan sebelum majlis dan tunggu status VIDEO SEDIA 100%. Jangan refresh halaman selepas itu.</p>
+            </div>
+
             <!-- AUTHENTICATE BUTTON -->
             <button onclick="startAuthentication()" class="w-full py-3.5 rounded-xl bg-gradient-to-r from-gold-metallic via-gold-bright to-gold-amber text-obsidian font-orbitron font-extrabold text-lg tracking-widest uppercase shadow-[0_0_25px_rgba(255,215,106,0.5)] transition-all hover:scale-[1.02] active:scale-[0.98] pulse-gold cursor-pointer flex items-center justify-center space-x-3">
                 <i class="fa-solid fa-key text-2xl"></i>
@@ -387,6 +409,7 @@
     <source src="./gimik-video.mp4" type="video/mp4">
   </video>
 
+  <div id="videoBufferStatus" role="status" hidden>MEMUATKAN VIDEO...</div>
   <button id="closeCeremonyVideo" type="button"
           aria-label="Tutup video dan kembali ke skrin pelancaran">✕</button>
   <div id="ceremonyVideoError" role="alert" hidden>Video tidak dapat dimainkan. Pastikan fail gimik-video.mp4 berada bersama index.html.</div>
@@ -725,7 +748,9 @@
             }
         }
 
+        let videoPlaybackActive = false;
         function animateMatrix() {
+            if (videoPlaybackActive) { requestAnimationFrame(animateMatrix); return; }
             mCtx.clearRect(0, 0, mCanvas.width, mCanvas.height);
             nodes.forEach(node => {
                 node.update();
@@ -786,6 +811,7 @@
         }
 
         function animateFireworks() {
+            if (videoPlaybackActive) { requestAnimationFrame(animateFireworks); return; }
             fCtx.clearRect(0, 0, fCanvas.width, fCanvas.height);
             for (let i = fireworks.length - 1; i >= 0; i--) {
                 fireworks[i].update();
@@ -821,6 +847,74 @@
         const retryCeremonyVideo = document.getElementById('retryCeremonyVideo');
         let ceremonyLaunching = false;
         let videoAttempt = 0;
+        let preparedVideoUrl = null;
+        let preparationPromise = null;
+        let videoIsReady = false;
+        const preparationStatus = document.getElementById('videoPreparationStatus');
+        const preparationProgress = document.getElementById('videoPreparationProgress');
+        const prepareVideoBtn = document.getElementById('prepareVideoBtn');
+        const bufferStatus = document.getElementById('videoBufferStatus');
+
+        // Call this BEFORE the ceremony. Fully downloading avoids network buffering during playback.
+        async function prepareCeremonyVideo() {
+            if (videoIsReady) return true;
+            if (preparationPromise) return preparationPromise;
+            preparationPromise = (async () => {
+                prepareVideoBtn.disabled = true;
+                preparationStatus.textContent = 'Memuat turun video ke komputer...';
+                try {
+                    const response = await fetch('./gimik-video.mp4', {cache:'default'});
+                    if (!response.ok) throw new Error('HTTP ' + response.status + ' — video tidak dijumpai');
+                    const total = Number(response.headers.get('content-length')) || 0;
+                    let blob;
+                    if (response.body && typeof response.body.getReader === 'function') {
+                        const reader = response.body.getReader();
+                        const chunks = [];
+                        let received = 0;
+                        while (true) {
+                            const {done, value} = await reader.read();
+                            if (done) break;
+                            chunks.push(value);
+                            received += value.byteLength;
+                            const mb = (received / 1048576).toFixed(1);
+                            const percent = total ? Math.min(100, Math.round(received / total * 100)) : 0;
+                            preparationProgress.style.width = total ? percent + '%' : '15%';
+                            preparationStatus.textContent = total ? `Memuat turun... ${percent}% (${mb} MB)` : `Memuat turun... ${mb} MB`;
+                        }
+                        blob = new Blob(chunks, {type:'video/mp4'});
+                    } else {
+                        blob = await response.blob();
+                    }
+                    if (!blob.size) throw new Error('Fail video kosong');
+                    // Create local blob URL; playback no longer depends on continued network access.
+                    const url = URL.createObjectURL(blob);
+                    ceremonyVideo.pause();
+                    ceremonyVideo.removeAttribute('src');
+                    // Clear original source so it cannot override the local blob.
+                    ceremonyVideo.querySelectorAll('source').forEach(el => el.remove());
+                    ceremonyVideo.src = url;
+                    ceremonyVideo.preload = 'auto';
+                    ceremonyVideo.load();
+                    if (preparedVideoUrl) URL.revokeObjectURL(preparedVideoUrl);
+                    preparedVideoUrl = url;
+                    videoIsReady = true;
+                    preparationProgress.style.width = '100%';
+                    preparationStatus.textContent = `✓ VIDEO SEDIA 100% (${(blob.size/1048576).toFixed(1)} MB) — boleh lancarkan majlis`;
+                    prepareVideoBtn.textContent = 'VIDEO SEDIA ✓';
+                    return true;
+                } catch (error) {
+                    console.error('Video preparation failed:', error);
+                    preparationStatus.textContent = 'GAGAL: ' + error.message + '. Semak video di GitHub Pages.';
+                    preparationProgress.style.width = '0%';
+                    return false;
+                } finally {
+                    prepareVideoBtn.disabled = false;
+                    preparationPromise = null;
+                }
+            })();
+            return preparationPromise;
+        }
+
 
         function showCeremonyVideoError(message) {
             ceremonyVideo.controls = true;
@@ -828,6 +922,7 @@
             ceremonyVideoError.hidden = false;
             retryCeremonyVideo.hidden = false;
             ceremonyLaunching = false;
+            bufferStatus.hidden = true;
         }
 
         function playCeremonyVideo() {
@@ -840,6 +935,9 @@
             ceremonyVideo.muted = isAudioMuted;
             ceremonyVideo.volume = 1;
             ceremonyOverlay.classList.add('active');
+            videoPlaybackActive = true;
+            document.body.classList.add('ceremony-video-playing');
+            bufferStatus.hidden = videoIsReady;
             ceremonyVideo.pause();
             try { ceremonyVideo.currentTime = 0; } catch (_) {}
 
@@ -853,7 +951,7 @@
             }
             if (playback && typeof playback.then === 'function') {
                 playback.then(() => {
-                    if (thisAttempt === videoAttempt) ceremonyLaunching = false;
+                    if (thisAttempt === videoAttempt) { ceremonyLaunching = false; bufferStatus.hidden = true; }
                 }).catch(error => {
                     if (thisAttempt !== videoAttempt) return;
                     console.error('Video playback failed:', error);
@@ -872,6 +970,9 @@
             ceremonyVideo.pause();
             try { ceremonyVideo.currentTime = 0; } catch (_) {}
             ceremonyOverlay.classList.remove('active');
+            bufferStatus.hidden = true;
+            videoPlaybackActive = false;
+            document.body.classList.remove('ceremony-video-playing');
             ceremonyVideo.controls = false;
             ceremonyVideoError.hidden = true;
             retryCeremonyVideo.hidden = true;
@@ -883,6 +984,8 @@
 
         closeCeremonyVideo.addEventListener('click', stopCeremonyVideo);
         retryCeremonyVideo.addEventListener('click', playCeremonyVideo);
+        ceremonyVideo.addEventListener('playing', () => { bufferStatus.hidden = true; });
+        ceremonyVideo.addEventListener('waiting', () => { if (ceremonyOverlay.classList.contains('active')) bufferStatus.hidden = false; });
         ceremonyVideo.addEventListener('ended', () => {
             stopCeremonyVideo();
             playSound('cyberFanfare');
