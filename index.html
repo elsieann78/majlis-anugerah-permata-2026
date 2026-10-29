@@ -847,6 +847,8 @@
         const retryCeremonyVideo = document.getElementById('retryCeremonyVideo');
         let ceremonyLaunching = false;
         let videoAttempt = 0;
+        let finalFrameHoldTimer = null;
+        const FINAL_FRAME_HOLD_MS = 15000;
         let preparedVideoUrl = null;
         let preparationPromise = null;
         let videoIsReady = false;
@@ -926,6 +928,10 @@
         }
 
         function playCeremonyVideo() {
+            if (finalFrameHoldTimer !== null) {
+                clearTimeout(finalFrameHoldTimer);
+                finalFrameHoldTimer = null;
+            }
             if (ceremonyLaunching) return;
             ceremonyLaunching = true;
             const thisAttempt = ++videoAttempt;
@@ -966,6 +972,10 @@
         }
 
         function stopCeremonyVideo() {
+            if (finalFrameHoldTimer !== null) {
+                clearTimeout(finalFrameHoldTimer);
+                finalFrameHoldTimer = null;
+            }
             ++videoAttempt;
             ceremonyVideo.pause();
             try { ceremonyVideo.currentTime = 0; } catch (_) {}
@@ -986,11 +996,20 @@
         retryCeremonyVideo.addEventListener('click', playCeremonyVideo);
         ceremonyVideo.addEventListener('playing', () => { bufferStatus.hidden = true; });
         ceremonyVideo.addEventListener('waiting', () => { if (ceremonyOverlay.classList.contains('active')) bufferStatus.hidden = false; });
+        // Keep the final frame visible for 15 seconds before returning to the launch button.
+        // Do not pause, rewind, or hide the overlay until the delay finishes.
         ceremonyVideo.addEventListener('ended', () => {
-            stopCeremonyVideo();
-            playSound('cyberFanfare');
-            triggerConfettiBurst();
-            triggerFireworksBurst();
+            if (!ceremonyOverlay.classList.contains('active')) return;
+            bufferStatus.hidden = true;
+            if (finalFrameHoldTimer !== null) clearTimeout(finalFrameHoldTimer);
+            finalFrameHoldTimer = setTimeout(() => {
+                finalFrameHoldTimer = null;
+                if (!ceremonyOverlay.classList.contains('active')) return;
+                stopCeremonyVideo();
+                playSound('cyberFanfare');
+                triggerConfettiBurst();
+                triggerFireworksBurst();
+            }, FINAL_FRAME_HOLD_MS);
         });
         ceremonyVideo.addEventListener('error', () => {
             if (ceremonyOverlay.classList.contains('active')) {
