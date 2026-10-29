@@ -137,12 +137,14 @@
     background: black;
   }
 
+  #ceremonyVideoError[hidden] { display: none !important; }
   #ceremonyVideoError {
     position: absolute; bottom: 32px; left: 5%; right: 5%;
     text-align: center; color: #FFD76A; background: rgba(0,0,0,.85);
     padding: 16px; border: 1px solid #D4AF37; border-radius: 10px;
     font-family: sans-serif; z-index: 3;
   }
+  #retryCeremonyVideo[hidden] { display: none !important; }
   #closeCeremonyVideo {
     position: absolute;
     top: 20px;
@@ -388,6 +390,7 @@
   <button id="closeCeremonyVideo" type="button"
           aria-label="Tutup video dan kembali ke skrin pelancaran">✕</button>
   <div id="ceremonyVideoError" role="alert" hidden>Video tidak dapat dimainkan. Pastikan fail gimik-video.mp4 berada bersama index.html.</div>
+  <button id="retryCeremonyVideo" type="button" hidden style="position:absolute;bottom:105px;left:50%;transform:translateX(-50%);z-index:5;padding:12px 26px;color:#030303;background:#FFD76A;border-radius:10px;font-weight:700;cursor:pointer">CUBA MAINKAN SEMULA</button>
 </div>
 
     </main>
@@ -815,40 +818,63 @@
         const ceremonyVideo = document.getElementById('ceremonyVideo');
         const ceremonyVideoError = document.getElementById('ceremonyVideoError');
         const closeCeremonyVideo = document.getElementById('closeCeremonyVideo');
+        const retryCeremonyVideo = document.getElementById('retryCeremonyVideo');
         let ceremonyLaunching = false;
+        let videoAttempt = 0;
+
+        function showCeremonyVideoError(message) {
+            ceremonyVideo.controls = true;
+            ceremonyVideoError.textContent = message;
+            ceremonyVideoError.hidden = false;
+            retryCeremonyVideo.hidden = false;
+            ceremonyLaunching = false;
+        }
 
         function playCeremonyVideo() {
             if (ceremonyLaunching) return;
             ceremonyLaunching = true;
+            const thisAttempt = ++videoAttempt;
             ceremonyVideoError.hidden = true;
+            retryCeremonyVideo.hidden = true;
             ceremonyVideo.controls = false;
             ceremonyVideo.muted = isAudioMuted;
             ceremonyVideo.volume = 1;
             ceremonyOverlay.classList.add('active');
+            ceremonyVideo.pause();
+            try { ceremonyVideo.currentTime = 0; } catch (_) {}
 
-            // Both requests begin synchronously in the click handler.
-            // Browsers may block fullscreen, but the overlay still fills the screen.
+            // Call play() directly during the real button click so audio is permitted.
+            const playback = ceremonyVideo.play();
+            // Fullscreen is also requested within the click, without waiting for video buffering.
             if (!document.fullscreenElement && ceremonyOverlay.requestFullscreen) {
-                ceremonyOverlay.requestFullscreen().catch(err => {
-                    console.warn('Fullscreen tidak dibenarkan:', err);
+                ceremonyOverlay.requestFullscreen().catch(error => {
+                    console.warn('Fullscreen not available; full-window overlay remains active:', error);
                 });
             }
-            try { ceremonyVideo.currentTime = 0; } catch (_) {}
-            const promise = ceremonyVideo.play();
-            if (promise && typeof promise.catch === 'function') {
-                promise.catch(err => {
-                    console.error('Video gagal dimainkan:', err);
-                    ceremonyVideo.controls = true;
-                    ceremonyVideoError.hidden = false;
+            if (playback && typeof playback.then === 'function') {
+                playback.then(() => {
+                    if (thisAttempt === videoAttempt) ceremonyLaunching = false;
+                }).catch(error => {
+                    if (thisAttempt !== videoAttempt) return;
+                    console.error('Video playback failed:', error);
+                    const errorCode = ceremonyVideo.error && ceremonyVideo.error.code;
+                    const msg = errorCode === 4 ? 'Format/codec video tidak disokong. Gunakan MP4 H.264 + AAC.' :
+                        errorCode === 2 ? 'Video gagal dimuat turun. Periksa sambungan Internet dan fail di GitHub Pages.' :
+                        error.name === 'NotAllowedError' ? 'Pelayar menghalang main automatik bersuara. Tekan CUBA MAINKAN SEMULA.' :
+                        'Video tidak dapat dimainkan. Pastikan gimik-video.mp4 telah dimuat naik dan nama fail tepat.';
+                    showCeremonyVideoError(msg);
                 });
             }
         }
 
         function stopCeremonyVideo() {
+            ++videoAttempt;
             ceremonyVideo.pause();
             try { ceremonyVideo.currentTime = 0; } catch (_) {}
             ceremonyOverlay.classList.remove('active');
+            ceremonyVideo.controls = false;
             ceremonyVideoError.hidden = true;
+            retryCeremonyVideo.hidden = true;
             ceremonyLaunching = false;
             if (document.fullscreenElement === ceremonyOverlay && document.exitFullscreen) {
                 document.exitFullscreen().catch(() => {});
@@ -856,17 +882,19 @@
         }
 
         closeCeremonyVideo.addEventListener('click', stopCeremonyVideo);
+        retryCeremonyVideo.addEventListener('click', playCeremonyVideo);
         ceremonyVideo.addEventListener('ended', () => {
             stopCeremonyVideo();
-            // Retain the original ceremonial finale after the video.
             playSound('cyberFanfare');
             triggerConfettiBurst();
             triggerFireworksBurst();
         });
         ceremonyVideo.addEventListener('error', () => {
-            if (ceremonyLaunching) {
-                ceremonyVideo.controls = true;
-                ceremonyVideoError.hidden = false;
+            if (ceremonyOverlay.classList.contains('active')) {
+                const code = ceremonyVideo.error && ceremonyVideo.error.code;
+                showCeremonyVideoError(code === 4 ?
+                    'Video tidak disokong atau tiada pada pelayan. Semak URL gimik-video.mp4 dan gunakan MP4 H.264/AAC.' :
+                    'Gagal memuatkan gimik-video.mp4. Semak fail tersebut dalam repository dan GitHub Pages.');
             }
         });
     </script>
